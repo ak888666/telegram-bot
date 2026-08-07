@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
-print("===== Bot 精简稳定版（已移除 /hn /gx /sms /3ys，新增 /sjhsc /sfzsc 免费）=====")
+print("===== Bot 精简稳定版（已移除 /hn /gx /sms /3ys，新增 /sjhsc /sfzsc /jmq 免费）=====")
 
 import os, subprocess
 
@@ -18,7 +18,7 @@ else:
     print("ℹ️ 未找到 requirements.txt，跳过自动安装")
 
 # ===== 导入所有第三方库 =====
-import time, json, io, tempfile, requests, urllib3, logging, re, random, threading, hashlib, hmac, urllib.parse, base64, itertools
+import time, json, io, tempfile, requests, urllib3, logging, re, random, threading, hashlib, hmac, urllib.parse, base64, itertools, marshal, zlib
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
@@ -397,7 +397,8 @@ PLC_NAME,PLC_ID,PLC_ADDR_CONFIRM,PLC_ADDR_MANUAL,PLC_PHOTO=range(10,15)
 
 # ---------- 新增免费命令状态 ----------
 SJHSC_TEMPLATE, SJHSC_LOCATION = range(700, 702)
-SFZSC_TEMPLATE, SFZSC_GENDER = range(703, 705)  # 已移除 SFZSC_NAME
+SFZSC_TEMPLATE, SFZSC_GENDER = range(703, 705)
+JMQ_FILE = 800   # 混淆器状态
 
 # ===== 代理池功能 =====
 def test_proxy(proxy):
@@ -446,8 +447,9 @@ def start(update, context):
            f"可用命令：\n"
            f"/sfz → 生成双面身份证（免费）\n"
            f"/plc → 生成PLC个户（免费）\n"
-           f"/sjhsc → 手机号生成器（免费）\n"
-           f"/sfzsc → 身份证号生成器（免费）\n"
+           f"/sjhsc → 手机号段生成器（免费）\n"
+           f"/sfzsc → 身份证号列表生成（免费）\n"
+           f"/jmq → Python脚本混淆加密（免费）\n"   # 这里改为 /jmq，并放在 sfzsc 后面
            f"/khzc → 空号检测（{KHZC_COST}积分）\n"
            f"/2ys → 二要素核实（{YS_COST}积分）\n"
            f"/qf → QQ反查历史\n"
@@ -1064,7 +1066,6 @@ def sjhsc_start(update, context):
 
 def sjhsc_template(update, context):
     if update.message.text and update.message.text.startswith('/'):
-        # 若命令，则取消并提示
         context.user_data.clear()
         update.message.reply_text("已取消✅重新点一下命令")
         return ConversationHandler.END
@@ -1116,7 +1117,7 @@ def sjhsc_location(update, context):
     return ConversationHandler.END
 
 # ============================================================================
-# 新增免费功能 2：/sfzsc 身份证号列表生成器（已移除姓名输入）
+# 新增免费功能 2：/sfzsc 身份证号列表生成器
 # ============================================================================
 DQM_API_URL = "https://xiaowunb.top/dqm.json"
 diquma = {}
@@ -1306,11 +1307,112 @@ def sfzsc_gender(update, context):
             return ConversationHandler.END
         content = "\n".join(valid_ids)
         bio = io.BytesIO(content.encode('utf-8'))
-        bio.name = "sfz.txt"   # 文件名改为 sfz.txt，不带 _list
+        bio.name = "sfz.txt"
         update.message.reply_document(document=bio, filename="sfz.txt", caption=f"✅ 共生成 {len(valid_ids)} 个身份证号")
     except Exception as e:
         update.message.reply_text(f"❌ 生成出错：{e}")
     finally:
+        context.user_data.clear()
+    return ConversationHandler.END
+
+# ============================================================================
+# 新增免费功能 3：/jmq 脚本混淆加密（原 /obfuscate 改为 /jmq）
+# ============================================================================
+# 混淆器辅助函数
+_look = list('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_')
+def _name(l=8):
+    first = random.choice('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_')
+    return first + ''.join(random.choices(_look, k=l-1))
+
+def random_alphanum(l=4):
+    chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    return ''.join(random.choices(chars, k=l))
+
+def junk(cnt):
+    parts = []
+    for _ in range(cnt):
+        name = _name()
+        val = random.choice([
+            str(random.randint(0, 999)),
+            repr(random_alphanum(3)),
+            str(random.random())[:6],
+            'True' if random.getrandbits(1) else 'False'
+        ])
+        parts.append(f'{name}={val}')
+    return ';'.join(parts)
+
+def random_split(text, min_len=30, max_len=50):
+    pieces, idx = [], 0
+    while idx < len(text):
+        seg_len = random.randint(min_len, max_len)
+        pieces.append(text[idx:idx+seg_len])
+        idx += seg_len
+    return pieces
+
+def obfuscate_code(code):
+    # 1. 压缩和序列化
+    compiled = marshal.dumps(compile(code, '<string>', 'exec'))
+    compressed = zlib.compress(compiled)
+    # 2. XOR 加密(单字节异或)
+    key = random.randint(1, 255)
+    xor_data = bytes([b ^ key for b in compressed])
+    b85_data = base64.b85encode(xor_data).decode()
+    # 3. 构建解密执行脚本(仅 4 行核心代码)
+    body_core = f'''import sys, os, base64, marshal, zlib
+k={key}
+exec(marshal.loads(zlib.decompress(bytes([b^k for b in base64.b85decode("{b85_data}")]))))'''
+    # 4. 混淆处理
+    outer_b64 = base64.b64encode(body_core.encode()).decode()
+    fragments = random_split(outer_b64)
+    frag_names = [_name() for _ in fragments]
+    list_name = _name()
+    junk_cnt = random.randint(20, 40)
+    junk_pool = junk(junk_cnt).split(';')
+    for idx, (name, piece) in enumerate(zip(frag_names, fragments)):
+        junk_pool.insert(random.randint(0, len(junk_pool)), f'{name}={repr(piece)}')
+    head = ';'.join(junk_pool)
+    tail = junk(random.randint(5, 10))
+    rejoin = f'{list_name}=[{",".join(frag_names)}];exec(__import__("base64").b64decode("".join({list_name})))'
+    return '# 天天开心\n' + head + ';' + rejoin + ';' + tail
+
+def jmq_start(update, context):
+    context.user_data.clear()
+    update.message.reply_text("📄 请发送一个 .py 脚本文件，我将进行混淆加密并返回已加密版本。")
+    return JMQ_FILE
+
+def jmq_file(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("已取消✅重新点一下命令")
+        return ConversationHandler.END
+    if not update.message.document:
+        update.message.reply_text("❌ 请发送一个 .py 文件（以附件形式）。")
+        return JMQ_FILE
+    doc = update.message.document
+    if not doc.file_name.endswith('.py'):
+        update.message.reply_text("❌ 只接受 .py 文件，请重新发送。")
+        return JMQ_FILE
+    # 下载文件
+    file = doc.get_file()
+    with tempfile.NamedTemporaryFile(suffix='.py', delete=False) as tmp:
+        file.download(tmp.name)
+        tmp_path = tmp.name
+    try:
+        with open(tmp_path, 'r', encoding='utf-8', errors='surrogateescape') as f:
+            code = f.read()
+        # 混淆
+        obfuscated = obfuscate_code(code)
+        # 生成输出文件名
+        base_name = os.path.splitext(doc.file_name)[0]
+        out_name = f"已加密{base_name}.py"
+        out_io = io.BytesIO(obfuscated.encode('utf-8'))
+        out_io.name = out_name
+        update.message.reply_document(document=out_io, filename=out_name, caption=f"✅ 混淆完成，已加密为 {out_name}")
+    except Exception as e:
+        update.message.reply_text(f"❌ 混淆失败：{e}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         context.user_data.clear()
     return ConversationHandler.END
 
@@ -1406,6 +1508,16 @@ def main():
         states={
             SFZSC_TEMPLATE: [MessageHandler(Filters.text & ~Filters.command, sfzsc_template)],
             SFZSC_GENDER: [MessageHandler(Filters.text & ~Filters.command, sfzsc_gender)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
+        allow_reentry=True
+    ))
+
+    # ---------- /jmq 混淆器（放在 sfzsc 后面） ----------
+    dp.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('jmq', jmq_start)],
+        states={
+            JMQ_FILE: [MessageHandler(Filters.document, jmq_file)],
         },
         fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
