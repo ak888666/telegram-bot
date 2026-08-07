@@ -447,9 +447,9 @@ def start(update, context):
            f"可用命令：\n"
            f"/sfz → 生成双面身份证（免费）\n"
            f"/plc → 生成PLC个户（免费）\n"
-           f"/sjhsc → 手机号段生成器（免费）\n"
-           f"/sfzsc → 身份证号列表生成（免费）\n"
-           f"/jmq → Python脚本混淆加密（免费）\n"   # 这里改为 /jmq，并放在 sfzsc 后面
+           f"/sjhsc → 手机号生成器（免费）\n"
+           f"/sfzsc → 身份证号生成器（免费）\n"
+           f"/jmq → Py脚本加密器（免费）\n"   # 这里改为 /jmq，并放在 sfzsc 后面
            f"/khzc → 空号检测（{KHZC_COST}积分）\n"
            f"/2ys → 二要素核实（{YS_COST}积分）\n"
            f"/qf → QQ反查历史\n"
