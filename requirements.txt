@@ -5,3 +5,4 @@ Pillow==10.3.0
 reportlab==4.2.2
 Flask==2.3.3
 pymongo==4.6.1
+gmssl
