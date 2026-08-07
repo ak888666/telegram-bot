@@ -397,7 +397,7 @@ PLC_NAME,PLC_ID,PLC_ADDR_CONFIRM,PLC_ADDR_MANUAL,PLC_PHOTO=range(10,15)
 
 # ---------- 新增免费命令状态 ----------
 SJHSC_TEMPLATE, SJHSC_LOCATION = range(700, 702)
-SFZSC_NAME, SFZSC_TEMPLATE, SFZSC_GENDER = range(703, 706)
+SFZSC_TEMPLATE, SFZSC_GENDER = range(703, 705)  # 已移除 SFZSC_NAME
 
 # ===== 代理池功能 =====
 def test_proxy(proxy):
@@ -541,6 +541,14 @@ def rh(update, context):
 def cancel(update, context):
     context.user_data.clear()
     update.message.reply_text("已取消")
+    return ConversationHandler.END
+
+# 新增：当在对话中收到其他命令时，提示并结束对话
+def cancel_with_prompt(update, context):
+    if update.message.text == '/cancel':
+        return cancel(update, context)
+    context.user_data.clear()
+    update.message.reply_text("已取消✅重新点一下命令")
     return ConversationHandler.END
 
 # ===== okcz 充值 =====
@@ -1056,8 +1064,9 @@ def sjhsc_start(update, context):
 
 def sjhsc_template(update, context):
     if update.message.text and update.message.text.startswith('/'):
+        # 若命令，则取消并提示
         context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
+        update.message.reply_text("已取消✅重新点一下命令")
         return ConversationHandler.END
     pattern = update.message.text.strip()
     gen = PhoneGenerator()
@@ -1073,7 +1082,7 @@ def sjhsc_template(update, context):
 def sjhsc_location(update, context):
     if update.message.text and update.message.text.startswith('/'):
         context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
+        update.message.reply_text("已取消✅重新点一下命令")
         return ConversationHandler.END
     location = update.message.text.strip()
     gen = PhoneGenerator()
@@ -1090,14 +1099,12 @@ def sjhsc_location(update, context):
         if not numbers:
             update.message.reply_text("❌ 生成失败，请检查模板。")
             return ConversationHandler.END
-        # 分类统计
         categorized = gen.filter_by_prefix(numbers)
         stats_lines = [f"📍 地区：{full_location}", f"📊 共生成 {len(numbers)} 个号码"]
         for op, nums in categorized.items():
             if nums:
                 stats_lines.append(f"  {op}：{len(nums)} 个")
         stats_text = "\n".join(stats_lines)
-        # 生成txt文件
         content = "\n".join(numbers)
         bio = io.BytesIO(content.encode('utf-8'))
         bio.name = "sjhsc_list.txt"
@@ -1109,7 +1116,7 @@ def sjhsc_location(update, context):
     return ConversationHandler.END
 
 # ============================================================================
-# 新增免费功能 2：/sfzsc 身份证号列表生成器
+# 新增免费功能 2：/sfzsc 身份证号列表生成器（已移除姓名输入）
 # ============================================================================
 DQM_API_URL = "https://xiaowunb.top/dqm.json"
 diquma = {}
@@ -1167,8 +1174,7 @@ def generate_ids(card_template, gender=None):
         print(f"🏢 地区:{diquma.get(addr_pat, '未知')}")
 
     if 'x' in year_pat:
-        # 交互式输入年份范围（在机器人中我们固定为1990-2005以减少计算量，或提示用户）
-        yr_input = "1990-2005"  # 此处做简化，实际可让用户输入
+        yr_input = "1990-2005"
         y1, y2 = 1990, 2005
         year_range = (y1, y2)
     else:
@@ -1258,26 +1264,13 @@ def generate_ids(card_template, gender=None):
 
 def sfzsc_start(update, context):
     context.user_data.clear()
-    update.message.reply_text("📝 请输入姓名（仅用于显示，不影响生成）：")
-    return SFZSC_NAME
-
-def sfzsc_name(update, context):
-    if update.message.text and update.message.text.startswith('/'):
-        context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
-        return ConversationHandler.END
-    name = update.message.text.strip()
-    if not name:
-        update.message.reply_text("姓名不能为空，请重新输入：")
-        return SFZSC_NAME
-    context.user_data['sfzsc_name'] = name
     update.message.reply_text("🔢 请输入18位身份证模板（x为通配符，如 1101011990xxxx123X）：")
     return SFZSC_TEMPLATE
 
 def sfzsc_template(update, context):
     if update.message.text and update.message.text.startswith('/'):
         context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
+        update.message.reply_text("已取消✅重新点一下命令")
         return ConversationHandler.END
     template = update.message.text.strip()
     if len(template) != 18:
@@ -1296,17 +1289,16 @@ def sfzsc_template(update, context):
 def sfzsc_gender(update, context):
     if update.message.text and update.message.text.startswith('/'):
         context.user_data.clear()
-        update.message.reply_text("⏹️ 已取消")
+        update.message.reply_text("已取消✅重新点一下命令")
         return ConversationHandler.END
     gender = update.message.text.strip()
     if gender not in ['男', '女']:
         gender = None
     template = context.user_data.get('sfzsc_template')
-    name = context.user_data.get('sfzsc_name', '用户')
     if not template:
         update.message.reply_text("❌ 会话已过期，请重新 /sfzsc")
         return ConversationHandler.END
-    update.message.reply_text(f"⏳ {name}，正在生成身份证号，请稍候...")
+    update.message.reply_text(f"⏳ 正在生成身份证号，请稍候...")
     try:
         valid_ids = generate_ids(template, gender)
         if not valid_ids:
@@ -1314,8 +1306,8 @@ def sfzsc_gender(update, context):
             return ConversationHandler.END
         content = "\n".join(valid_ids)
         bio = io.BytesIO(content.encode('utf-8'))
-        bio.name = "sfz_list.txt"
-        update.message.reply_document(document=bio, filename="sfz_list.txt", caption=f"✅ {name}，共生成 {len(valid_ids)} 个身份证号")
+        bio.name = "sfz.txt"   # 文件名改为 sfz.txt，不带 _list
+        update.message.reply_document(document=bio, filename="sfz.txt", caption=f"✅ 共生成 {len(valid_ids)} 个身份证号")
     except Exception as e:
         update.message.reply_text(f"❌ 生成出错：{e}")
     finally:
@@ -1343,7 +1335,7 @@ def main():
     dp.add_handler(ConversationHandler(
         entry_points=[CommandHandler('okcz', okcz_start)],
         states={RECHARGE_AMOUNT: [MessageHandler(Filters.text, okcz_amount)]},
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
     ))
 
@@ -1357,7 +1349,7 @@ def main():
             SFZ_EXPIRY: [MessageHandler(Filters.text, sfz_expiry)],
             SFZ_PHOTO: [MessageHandler(Filters.photo, sfz_photo)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
     ))
 
@@ -1370,14 +1362,14 @@ def main():
             PLC_ADDR_MANUAL: [MessageHandler(Filters.text, plc_addr_manual)],
             PLC_PHOTO: [MessageHandler(Filters.photo, plc_photo)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
     ))
 
     dp.add_handler(ConversationHandler(
         entry_points=[CommandHandler('qf', qf_start)],
         states={QF_QQ: [MessageHandler(Filters.text, qf_qq)]},
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
     ))
 
@@ -1387,14 +1379,14 @@ def main():
             YS_NAME: [MessageHandler(Filters.text, ys_name)],
             YS_ID: [MessageHandler(Filters.text, ys_id)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
     ))
 
     dp.add_handler(ConversationHandler(
         entry_points=[CommandHandler('khzc', khzc_start)],
         states={KHZC_PHONE: [MessageHandler(Filters.text & ~Filters.command, khzc_phone)]},
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
     ))
 
@@ -1405,18 +1397,17 @@ def main():
             SJHSC_TEMPLATE: [MessageHandler(Filters.text & ~Filters.command, sjhsc_template)],
             SJHSC_LOCATION: [MessageHandler(Filters.text & ~Filters.command, sjhsc_location)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
     ))
 
     dp.add_handler(ConversationHandler(
         entry_points=[CommandHandler('sfzsc', sfzsc_start)],
         states={
-            SFZSC_NAME: [MessageHandler(Filters.text & ~Filters.command, sfzsc_name)],
             SFZSC_TEMPLATE: [MessageHandler(Filters.text & ~Filters.command, sfzsc_template)],
             SFZSC_GENDER: [MessageHandler(Filters.text & ~Filters.command, sfzsc_gender)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.command, cancel_with_prompt)],
         allow_reentry=True
     ))
 
